@@ -1,9 +1,9 @@
-from config import *
 from telebot.async_telebot import *
 from SQL.user_base import *
 from get_report import *
 from pathlib import Path
 from grafics import *
+from ai_helper import *
 
 bot = AsyncTeleBot(TOKEN)
 
@@ -46,14 +46,11 @@ async def save_user_document(message):
         file_name = message.document.file_name
         file_info = await bot.get_file(message.document.file_id)
 
-
-
         if '.csv' not in file_name:
             await bot.send_message(
                 chat_id=message.chat.id,
                 text="❌ Пожалуйста, отправьте файл в формате \".csv\""
             )
-
             return
         if type_file not in ['menu_plan', 'sales_fact']:
             await bot.reply_to(
@@ -68,17 +65,16 @@ async def save_user_document(message):
         if type_file == 'menu_plan':
             message_doc = await bot.send_message(
                 chat_id=message.chat.id,
-                text="Получен новый файл план продаж"
+                text="🗒️ Получен новый файл \"План продаж\""
             )
             file_name = 'menu_plan.csv'
 
         elif type_file == 'sales_fact':
             message_doc = await bot.send_message(
                 chat_id=message.chat.id,
-                text="Получен новый файл фактических продаж"
+                text="🛒 Получен новый файл \"Фактические продажи\""
             )
             file_name = 'sales_fact.csv'
-
 
         user_dir = f"user_data/{message.chat.id}"
         os.makedirs(user_dir, exist_ok=True)
@@ -88,12 +84,10 @@ async def save_user_document(message):
         with open(file_path, 'wb') as new_file:
             new_file.write(downloaded_file)
 
-
         await bot.delete_message(
             chat_id=message.chat.id,
             message_id=message.message_id
         )
-
         await asyncio.sleep(4)
 
         await bot.delete_message(
@@ -110,7 +104,16 @@ async def save_user_document(message):
             )
             styled, sum_table = await get_report(message.chat.id)
 
-            await bot.delete_message(chat_id=message.chat.id, message_id=message_bot.message_id)
+            if styled is None or sum_table is None:
+                os.remove(f'{user_dir}/menu_plan.csv')
+                os.remove(f'{user_dir}/sales_fact.csv')
+                await bot.send_message(
+                    chat_id=message.chat.id,
+                    text=("❗️Ошибка при формировании отчёта\n"
+                          "Возможно Вы загрузили файл с ошибками")
+                )
+                return
+
 
             os.remove(f'{user_dir}/menu_plan.csv')
             os.remove(f'{user_dir}/sales_fact.csv')
@@ -136,6 +139,25 @@ async def save_user_document(message):
 
             markup.add(types.InlineKeyboardButton(text="📊 Получить отчет", callback_data="report"))
             markup.add(types.InlineKeyboardButton(text="📈 Получить графики", callback_data='graphs'))
+
+            full_response = ""
+            chunk_buffer = ""
+
+            async for chunk in get_ai_response(message.chat.id):
+                chunk_buffer += chunk
+                full_response += chunk
+
+                if len(chunk_buffer) > 30 or '\n' in chunk_buffer:
+                    display_text = full_response[:1000] + "..." if len(full_response) > 1000 else full_response
+
+                    await bot.edit_message_text(
+                        chat_id=message.chat.id,
+                        message_id=message_bot.message_id,
+                        text=display_text
+                    )
+
+                    chunk_buffer = ""
+                    await asyncio.sleep(0.03)
 
             await bot.send_message(
                 chat_id=message.chat.id,
@@ -235,7 +257,7 @@ async def report(call):
 
     await bot.send_message(
         chat_id=message.chat.id,
-        text="Теперь выберите какой документ вы хотите загрузить:",
+        text="💬 Теперь выберите какой документ вы хотите загрузить:",
         reply_markup=markup
     )
 
